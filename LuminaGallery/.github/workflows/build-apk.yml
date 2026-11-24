@@ -1,0 +1,65 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # Uses your own keystore when these repository secrets exist:
+      #   LUMINA_KEYSTORE_BASE64, LUMINA_KEYSTORE_PASSWORD, LUMINA_KEY_ALIAS, LUMINA_KEY_PASSWORD
+      # Otherwise a throw-away key is generated so the APK is still installable.
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.LUMINA_KEYSTORE_BASE64 }}
+          KS_PASS_SECRET: ${{ secrets.LUMINA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.LUMINA_KEY_ALIAS }}
+          KEY_PASS_SECRET: ${{ secrets.LUMINA_KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/lumina-release.jks"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$KS"
+            echo "LUMINA_KS_PASS=$KS_PASS_SECRET" >> "$GITHUB_ENV"
+            echo "LUMINA_KEY_ALIAS=$KEY_ALIAS_SECRET" >> "$GITHUB_ENV"
+            echo "LUMINA_KEY_PASS=$KEY_PASS_SECRET" >> "$GITHUB_ENV"
+          else
+            keytool -genkeypair -keystore "$KS" -storepass luminaci123 -keypass luminaci123 \
+              -alias lumina -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Lumina Gallery CI, O=Lumina, C=US"
+            echo "LUMINA_KS_PASS=luminaci123" >> "$GITHUB_ENV"
+            echo "LUMINA_KEY_ALIAS=lumina" >> "$GITHUB_ENV"
+            echo "LUMINA_KEY_PASS=luminaci123" >> "$GITHUB_ENV"
+          fi
+          echo "LUMINA_KEYSTORE=$KS" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        run: gradle :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuminaGallery-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
